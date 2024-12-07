@@ -1,0 +1,4 @@
+**/build
+**/tests
+**/.vscode
+ddriver_dump

@@ -20,7 +20,7 @@ struct demo_super
 
     int     sz_io;      /* 磁盘IO大小，单位B */
     int     sz_disk;    /* 磁盘容量大小，单位B */
-    int     sz_blks;    /* 逻辑块大小，单位B */
+    int     sz_blks;    /* 逻辑块大小，单位B 一个逻辑块是两个IO的大小 */
 };
 
 /* 目录项 */
@@ -44,9 +44,21 @@ static void* demo_mount(struct fuse_conn_info * conn_info){
 
 
     /* 填充super信息 */
-    super.sz_io = /* TODO */;
-    super.sz_disk = /* TODO */;
-    super.sz_blks = /* TODO */; 
+    int io_size;
+    if(ddriver_ioctl(super.driver_fd, IOC_REQ_DEVICE_IO_SZ, &io_size) < 0){
+        perror("Fial to get IO size");
+        return NULL;
+    }
+    super.sz_io = io_size;
+
+    int disk_size;
+    if(ddriver_ioctl(super.driver_fd, IOC_REQ_DEVICE_SIZE, &disk_size) < 0){
+        perror("Fial to get disk size");
+        return NULL;
+    }
+    super.sz_disk =disk_size;
+
+    super.sz_blks =super.sz_io*2; 
 
     return 0;
 }
@@ -65,15 +77,27 @@ static int demo_readdir(const char* path, void* buf, fuse_fill_dir_t filler, off
     char filename[128]; // 待填充的
 
     /* 根据超级块的信息，从第500逻辑块读取一个dentry，ls将只固定显示这个文件名 */
-
+    
     /* TODO: 计算磁盘偏移off，并根据磁盘偏移off调用ddriver_seek移动磁盘头到磁盘偏移off处 */
-
+    off_t bytes_oft = 500 * super.sz_blks; //大端还是小段对齐的问题
+    int seek_res = ddriver_seek(super.driver_fd, bytes_oft, SEEK_SET);
+    if(seek_res < 0){
+        perror("ddriver_seek fail");
+        return seek_res;
+    }
     /* TODO: 调用ddriver_read读出一个磁盘块到内存，512B */
-
+    char bufffer[512];
+    int read_res = ddriver_read(super.driver_fd, bufffer, super.sz_io);
+    if(read_res < 0){
+        perror("ddrover_rad fail");
+        return read_res;
+    }
     /* TODO: 使用memcpy拷贝上述512B的前sizeof(demo_dentry)字节构建一个demo_dentry结构 */
-
+    struct demo_dentry dentry;
+    memcpy(&dentry, bufffer, sizeof(dentry));
     /* TODO: 填充filename */
-
+    strncpy(filename, dentry.fname, sizeof(filename)-1);
+    filename[sizeof(filename)-1] = '\0';
     // 此处大家先不关注filler，已经帮同学写好，同学填充好filename即可
     return filler(buf, filename, NULL, 0);
 }
@@ -82,9 +106,9 @@ static int demo_readdir(const char* path, void* buf, fuse_fill_dir_t filler, off
 static int demo_getattr(const char* path, struct stat *stbuf)
 {
     if(strcmp(path, "/") == 0)
-        stbuf->st_mode = DEMO_DEFAULT_PERM | S_IFDIR;            // 根目录是目录文件
+        stbuf->st_mode = DEMO_DEFAULT_PERM | S_IFDIR;                        // 根目录是目录文件
     else
-        stbuf->st_mode = /* TODO: 显示为普通文件 */;            // 该文件显示为普通文件
+        stbuf->st_mode = DEMO_DEFAULT_PERM | S_IFREG;            // 该文件显示为普通文件
     return 0;
 }
 
