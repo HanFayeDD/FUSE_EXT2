@@ -23,7 +23,7 @@ char *nfs_get_fname(const char *path)
  * @param path
  * @return int
  */
-int sfs_calc_lvl(const char *path)
+int nfs_calc_lvl(const char *path)
 {
     char *str = path;
     int lvl = 0;
@@ -43,7 +43,6 @@ int sfs_calc_lvl(const char *path)
     }
     return lvl;
 }
-
 /**
  * @brief 驱动读
  *
@@ -304,33 +303,52 @@ int nfs_sync_inode(struct nfs_inode *inode)
     return NFS_ERROR_NONE;
 }
 
-struct nfs_dentry* nfs_lookup(const char * path, boolean* is_find, boolean* is_root) {
-    struct nfs_dentry* dentry_cursor = nfs_super.root_dentry;
-    struct nfs_dentry* dentry_ret = NULL;
-    struct nfs_inode*  inode; 
-    int   total_lvl = nfs_calc_lvl(path);
-    int   lvl = 0;
+struct nfs_dentry *nfs_get_dentry(struct nfs_inode *inode, int dir)
+{
+    struct nfs_dentry *dentry_cursor = inode->dentrys;
+    int cnt = 0;
+    while (dentry_cursor)
+    {
+        if (dir == cnt)
+        {
+            return dentry_cursor;
+        }
+        cnt++;
+        dentry_cursor = dentry_cursor->brother;
+    }
+    return NULL;
+}
+
+struct nfs_dentry *nfs_lookup(const char *path, boolean *is_find, boolean *is_root)
+{
+    struct nfs_dentry *dentry_cursor = nfs_super.root_dentry;
+    struct nfs_dentry *dentry_ret = NULL;
+    struct nfs_inode *inode;
+    int total_lvl = nfs_calc_lvl(path);
+    int lvl = 0;
     boolean is_hit;
-    char* fname = NULL;
-    char* path_cpy = (char*)malloc(sizeof(path));
+    char *fname = NULL;
+    char *path_cpy = (char *)malloc(sizeof(path));
     *is_root = FALSE;
     strcpy(path_cpy, path);
 
     /* 如果路径的级数为0，则说明是根目录，直接返回根目录项即可 */
-    if (total_lvl == 0) {                           
+    if (total_lvl == 0)
+    {
         *is_find = TRUE;
         *is_root = TRUE;
         dentry_ret = nfs_super.root_dentry;
     }
 
     /* 获取最外层文件夹名称 */
-    fname = strtok(path_cpy, "/");       
+    fname = strtok(path_cpy, "/");
     while (fname)
-    {   
+    {
         lvl++;
 
         /* Cache机制，如果当前dentry对应的inode为空，则从磁盘中读取 */
-        if (dentry_cursor->inode == NULL) {           
+        if (dentry_cursor->inode == NULL)
+        {
             nfs_read_inode(dentry_cursor, dentry_cursor->ino);
         }
 
@@ -338,30 +356,34 @@ struct nfs_dentry* nfs_lookup(const char * path, boolean* is_find, boolean* is_r
         inode = dentry_cursor->inode;
 
         /* 若当前inode对应文件类型，且还没查找到对应层数，说明路径错误，跳出循环 */
-        if (NFS_IS_REG(inode) && lvl < total_lvl) {
+        if (NFS_IS_REG(inode) && lvl < total_lvl)
+        {
             NFS_DBG("[%s] not a dir\n", __func__);
             dentry_ret = inode->dentry;
             break;
         }
         /* 若当前inode对应文件夹 */
-        if (NFS_IS_DIR(inode)) {
+        if (NFS_IS_DIR(inode))
+        {
             dentry_cursor = inode->dentrys;
-            is_hit        = FALSE;
+            is_hit = FALSE;
 
             /* 遍历该目录下所有目录项 */
             while (dentry_cursor)
             {
                 /* 如果名称匹配，则命中 */
-                if (memcmp(dentry_cursor->fname, fname, strlen(fname)) == 0) {
+                if (memcmp(dentry_cursor->fname, fname, strlen(fname)) == 0)
+                {
                     is_hit = TRUE;
                     break;
                 }
                 // 否则查找下一个目录项
                 dentry_cursor = dentry_cursor->brother;
             }
-            
+
             /* 若未命中 */
-            if (!is_hit) {
+            if (!is_hit)
+            {
                 *is_find = FALSE;
                 NFS_DBG("[%s] not found %s\n", __func__, fname);
                 dentry_ret = inode->dentry;
@@ -369,21 +391,23 @@ struct nfs_dentry* nfs_lookup(const char * path, boolean* is_find, boolean* is_r
             }
 
             /* 若命中 */
-            if (is_hit && lvl == total_lvl) {
+            if (is_hit && lvl == total_lvl)
+            {
                 *is_find = TRUE;
                 dentry_ret = dentry_cursor;
                 break;
             }
         }
         /* 获取下一层文件夹名称 */
-        fname = strtok(NULL, "/"); 
+        fname = strtok(NULL, "/");
     }
 
     /* 如果对应dentry的inode还没读进来，则重新读 */
-    if (dentry_ret->inode == NULL) {
+    if (dentry_ret->inode == NULL)
+    {
         dentry_ret->inode = nfs_read_inode(dentry_ret, dentry_ret->ino);
     }
-    
+
     return dentry_ret;
 }
 
@@ -495,6 +519,98 @@ int nfs_mount(struct custom_options options)
         root_inode = nfs_alloc_inode(root_dentry);
         nfs_sync_inode(root_inode);
     }
+    root_inode = nfs_read_inode(root_dentry, NFS_ROOT_INO);
+    root_dentry->inode = root_inode;
+    nfs_super.root_dentry = root_dentry;
+    nfs_super.is_mounted = TRUE;
+
+    return ret;
+}
+
+/**
+ * @brief
+ *
+ * @param dentry dentry指向ino，读取该inode
+ * @param ino inode唯一编号
+ * @return struct nfs_inode*
+ */
+struct nfs_inode *nfs_read_inode(struct nfs_dentry *dentry, int ino)
+{
+    struct nfs_inode *inode = (struct nfs_inode *)malloc(sizeof(struct nfs_inode));
+    struct nfs_inode_d inode_d;
+    struct nfs_dentry *sub_dentry;
+    struct nfs_dentry_d dentry_d;
+    int dir_cnt = 0;
+
+    /* 从磁盘中读取ino对应的inode_d */
+    if (nfs_driver_read(NFS_INO_OFS(ino), (uint8_t *)&inode_d,
+                        sizeof(struct nfs_inode_d)) != NFS_ERROR_NONE)
+    {
+        NFS_DBG("[%s] io error\n", __func__);
+        return NULL;
+    }
+
+    /* 根据inode_d更新内存中inode参数 */
+    inode->dir_cnt = 0;
+    inode->ino = inode_d.ino;
+    inode->size = inode_d.size;
+    inode->dentry = dentry;
+    inode->dentrys = NULL;
+    for (int i = 0; i < NFS_DATA_PER_FILE; i++)
+    {
+        inode->used_block_num[i] = inode_d.used_block_num[i];
+    }
+
+    /*判断iNode节点的文件类型*/
+    /*如果inode是目录类型，则需要读取每一个目录项并建立连接*/
+    if (NFS_IS_DIR(inode))
+    {
+        dir_cnt = inode_d.dir_cnt;
+        int blk_number = 0;
+        int offset;
+
+        /*处理每一个目录项*/
+        while (dir_cnt > 0 && blk_number < NFS_DATA_PER_FILE)
+        {
+            offset = NFS_DATA_OFS(inode->used_block_num[blk_number]);
+
+            // 当从磁盘读入时，由于磁盘中没有链表指针，因此只能通过一个dentry_d大小来进行遍历
+            while ((dir_cnt > 0) && (offset + sizeof(struct nfs_dentry_d) < NFS_DATA_OFS(inode->used_block_num[blk_number] + 1)))
+            {
+                if (nfs_driver_read(offset, (uint8_t *)&dentry_d, sizeof(struct nfs_dentry_d)) != NFS_ERROR_NONE)
+                {
+                    NFS_DBG("[%s] io error\n", __func__);
+                    return NULL;
+                }
+
+                /* 用从磁盘中读出的dentry_d更新内存中的sub_dentry */
+                sub_dentry = new_dentry(dentry_d.fname, dentry_d.ftype);
+                sub_dentry->parent = inode->dentry;
+                sub_dentry->ino = dentry_d.ino;
+                nfs_alloc_dentry(inode, sub_dentry);
+
+                offset += sizeof(struct nfs_dentry_d);
+                dir_cnt--;
+            }
+            blk_number++;
+        }
+    }
+    /*如果inode是文件类型，则直接读取数据即可*/
+    else if (NFS_IS_REG(inode))
+    {
+        for (int i = 0; i < NFS_DATA_PER_FILE; i++)
+        {
+            inode->data[i] = (uint8_t *)malloc(NFS_BLK_SZ());
+            if (nfs_driver_read(NFS_DATA_OFS(inode->used_block_num[i]), (uint8_t *)inode->data[i],
+                                NFS_BLK_SZ()) != NFS_ERROR_NONE)
+            {
+                NFS_DBG("[%s] io error\n", __func__);
+                return NULL;
+            }
+        }
+    }
+
+    return inode;
 }
 
 int nfs_umount()

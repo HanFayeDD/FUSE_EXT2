@@ -1,1 +1,3 @@
-# 你的README文档
+# 自动测试
+## fail
+![alt text](assets/image.png)

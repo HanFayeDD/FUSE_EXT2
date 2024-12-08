@@ -16,7 +16,7 @@ static const struct fuse_opt option_spec[] = {/* 用于FUSE文件系统解析参
 											  FUSE_OPT_END};
 
 struct custom_options newfs_options; /* 全局选项 */
-extern struct nfs_super super;
+extern struct nfs_super nfs_super;
 /******************************************************************************
  * SECTION: FUSE操作定义
  *******************************************************************************/
@@ -52,7 +52,7 @@ void *newfs_init(struct fuse_conn_info *conn_info)
 	/* TODO: 在这里进行挂载 */
 	if (nfs_mount(newfs_options) != NFS_ERROR_NONE)
 	{
-		SFS_DBG("[%s] mount error\n", __func__);
+		NFS_DBG("[%s] mount error\n", __func__);
 		fuse_exit(fuse_get_context()->fuse);
 		return NULL;
 	}
@@ -68,7 +68,8 @@ void *newfs_init(struct fuse_conn_info *conn_info)
 void newfs_destroy(void *p)
 {
 	/* TODO: 在这里进行卸载 */
-	if (nfs_umount() != NFS_ERROR_NONE) {
+	if (nfs_umount() != NFS_ERROR_NONE)
+	{
 		NFS_DBG("[%s] unmount error\n", __func__);
 		fuse_exit(fuse_get_context()->fuse);
 		return;
@@ -88,28 +89,30 @@ int newfs_mkdir(const char *path, mode_t mode)
 	/* TODO: 解析路径，创建目录 */
 	(void)mode;
 	boolean is_find, is_root;
-	char* fname;
-	struct nfs_dentry* last_dentry = nfs_lookup(path, &is_find, &is_root);
-	struct nfs_dentry* dentry;
-	struct nfs_inode*  inode;
-	
-	if (is_find) {
+	char *fname;
+	struct nfs_dentry *last_dentry = nfs_lookup(path, &is_find, &is_root);
+	struct nfs_dentry *dentry;
+	struct nfs_inode *inode;
+
+	if (is_find)
+	{
 		return -NFS_ERROR_EXISTS;
 	}
 	// 最后一级目录是文件则无法再创建目录
-	if (NFS_IS_REG(last_dentry->inode)) {
+	if (NFS_IS_REG(last_dentry->inode))
+	{
 		return -NFS_ERROR_UNSUPPORTED;
 	}
 
-	//为新创建的文件夹创建一个新的dentry
+	// 为新创建的文件夹创建一个新的dentry
 	fname = nfs_get_fname(path);
 	dentry = new_dentry(fname, NFS_DIR);
-	dentry->parent = last_dentry;//维护层级结构
+	dentry->parent = last_dentry; // 维护层级结构
 
-	//为新建的目录创建一个索引
+	// 为新建的目录创建一个索引
 	inode = nfs_alloc_inode(dentry);
 
-	//将新建的目录添加到父目录的inode当中
+	// 将新建的目录添加到父目录的inode当中
 	nfs_alloc_dentry(last_dentry->inode, dentry);
 
 	return NFS_ERROR_NONE;
@@ -122,10 +125,39 @@ int newfs_mkdir(const char *path, mode_t mode)
  * @param newfs_stat 返回状态
  * @return int 0成功，否则返回对应错误号
  */
-int newfs_getattr(const char *path, struct stat *newfs_stat)
+int newfs_getattr(const char *path, struct stat *nfs_stat)
 {
 	/* TODO: 解析路径，获取Inode，填充newfs_stat，可参考/fs/simplefs/sfs.c的sfs_getattr()函数实现 */
-	return 0;
+	boolean is_find, is_root;
+	struct nfs_dentry *dentry = nfs_lookup(path, &is_find, &is_root);
+	if (is_find == FALSE)
+	{
+		return -NFS_ERROR_NOTFOUND;
+	}
+	if (NFS_IS_DIR(dentry->inode))
+	{
+		nfs_stat->st_mode = S_IFDIR | NFS_DEFAULT_PERM; // 文件的模式，包括文件的权限、文件类型
+		nfs_stat->st_size = dentry->inode->dir_cnt * sizeof(struct nfs_dentry_d);
+	}
+	else if (NFS_IS_REG(dentry->inode))
+	{
+		nfs_stat->st_mode = S_IFREG | NFS_DEFAULT_PERM;
+		nfs_stat->st_size = dentry->inode->size;
+	}
+	nfs_stat->st_nlink = 1;
+	nfs_stat->st_uid = getuid();
+	nfs_stat->st_gid = getgid();
+	nfs_stat->st_blksize = NFS_BLK_SZ();
+	nfs_stat->st_atime = time(NULL); // 文件最近一次访问时间
+	nfs_stat->st_mtime = time(NULL); // 文件最近一次修改时间
+
+	if (is_root)
+	{
+		nfs_stat->st_size = nfs_super.sz_usage;
+		nfs_stat->st_blocks = NFS_DISK_SZ() / NFS_BLK_SZ(); // 文件所占的块数
+		nfs_stat->st_nlink = 2;								/* !特殊，根目录link数为2 */
+	}
+	return NFS_ERROR_NONE;
 }
 
 /**
@@ -150,7 +182,26 @@ int newfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
 				  struct fuse_file_info *fi)
 {
 	/* TODO: 解析路径，获取目录的Inode，并读取目录项，利用filler填充到buf，可参考/fs/simplefs/sfs.c的sfs_readdir()函数实现 */
-	return 0;
+	boolean is_find, is_root;
+	int cur_dir = offset;
+
+	/* 解析父目录路径 */
+	struct nfs_dentry *dentry = nfs_lookup(path, &is_find, &is_root);
+	struct nfs_dentry *sub_dentry;
+	struct nfs_inode *inode;
+	if (is_find)
+	{
+		inode = dentry->inode;
+		/* 根据offset获取到对应的子文件名 */
+		sub_dentry = nfs_get_dentry(inode, cur_dir);
+		if (sub_dentry)
+		{
+			/* 直接调用filler来装填结果 */
+			filler(buf, sub_dentry->fname, NULL, ++offset);
+		}
+		return NFS_ERROR_NONE;
+	}
+	return -NFS_ERROR_NOTFOUND;
 }
 
 /**
@@ -164,10 +215,33 @@ int newfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t off
 int newfs_mknod(const char *path, mode_t mode, dev_t dev)
 {
 	/* TODO: 解析路径，并创建相应的文件 */
-	
-
-
-	return 0;
+	boolean is_find, is_root;
+	struct nfs_dentry *last_dentry = nfs_lookup(path, &is_find, &is_root);
+	struct nfs_dentry *dentry;
+	struct nfs_inode *inode;
+	char *fname;
+	// 同名文件已经存在
+	if (is_find == TRUE)
+	{
+		return -NFS_ERROR_EXISTS;
+	}
+	fname = nfs_get_fname(path);
+	if (S_ISREG(mode))
+	{
+		dentry = new_dentry(fname, NFS_FILE);
+	}
+	else if (S_ISDIR(mode))
+	{
+		dentry = new_dentry(fname, NFS_DIR);
+	}
+	else
+	{
+		dentry = new_dentry(fname, NFS_FILE);
+	}
+	dentry->parent = last_dentry;
+	inode = nfs_alloc_inode(dentry);
+	nfs_alloc_dentry(last_dentry->inode, dentry);
+	return NFS_ERROR_NONE;
 }
 
 /**
