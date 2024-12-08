@@ -455,7 +455,7 @@ int nfs_mount(struct custom_options options)
     root_dentry = new_dentry("/", NFS_DIR);
 
     // 读取磁盘super_d
-    if (nfs_driver_read(NFS_SUPER_OFS, (uint8_t *)(&nfs_super_d), sizeof(nfs_super_d)) != NFS_ERROR_NONE)
+    if (nfs_driver_read(NFS_SUPER_OFS, (uint8_t *)(&nfs_super_d), sizeof(struct nfs_super_d)) != NFS_ERROR_NONE)
     {
         return -1;
     }

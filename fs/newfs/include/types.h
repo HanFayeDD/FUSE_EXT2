@@ -40,7 +40,7 @@ typedef enum file_type
 // 一个逻辑块里面可以放16个inode
 #define NFS_INODE_PER_FILE 16
 // 一个文件最多使用4个数据块
-#define NFS_DATA_PER_FILE 4
+#define NFS_DATA_PER_FILE 6
 #define NFS_DEFAULT_PERM 0777
 
 #define NFS_IOC_MAGIC 'S'
@@ -56,8 +56,8 @@ typedef enum file_type
 #define NFS_BLKS_MAP_INODE 1
 // 数据区位图
 #define NFS_BLKS_MAP_DATA 1
-#define NFS_BLKS_INODE 64
-#define NFS_BLKS_DATA 4029
+#define NFS_BLKS_INODE 585
+#define NFS_BLKS_DATA 3508
 
 /******************************************************************************
  * SECTION: Macro Function
