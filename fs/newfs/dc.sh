@@ -1,3 +1,2 @@
 cd ..
-cd ..
 ddriver -r

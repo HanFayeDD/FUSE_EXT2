@@ -244,7 +244,7 @@ int nfs_sync_inode(struct nfs_inode *inode)
     inode_d.size = inode->size;
     inode_d.ftype = inode->dentry->ftype;
     inode_d.dir_cnt = inode->dir_cnt;
-    printf("*****back to disk %s\n", inode->dentry->fname);
+    printf("*****back to disk fname %s\n", inode->dentry->fname);
     for (int i = 0; i < NFS_DATA_PER_FILE; i++)
     {
         inode_d.used_block_num[i] = inode->used_block_num[i];
@@ -257,32 +257,22 @@ int nfs_sync_inode(struct nfs_inode *inode)
         return -NFS_ERROR_IO;
     }
 
-    // inode是一个普通文件索引
-    if (NFS_IS_REG(inode))
-    {      
-        printf("*****back to disk is file %s\n", inode->dentry->fname);
-        for (int i = 0; i < NFS_DATA_PER_FILE; i++)
-        {
-            if (nfs_driver_write(NFS_DATA_OFS(inode->used_block_num[i]), inode->data[i], NFS_BLK_SZ()) != NFS_ERROR_NONE)
-            {
-                NFS_DBG("[%s] io error\n", __func__);
-                return -NFS_ERROR_IO;
-            }
-        }
-    }
     // inode是一个指向文件夹的索引，要遍历里面每一个dentry对应的inode。会有递归
-    else if (NFS_IS_DIR(inode))
-    {   
+    if (NFS_IS_DIR(inode))
+    {
         printf("*****back to disk is dir %s\n", inode->dentry->fname);
         int offset;
+        int dentry_d_per_block = NFS_BLK_SZ() / sizeof(struct nfs_dentry_d);
+        int num_dentry_d_in_this_block;
         int blk_number = 0;
         dentry_cursor = inode->dentrys;
         // 遍历一个inode对应的所有data块
-        while (dentry_cursor != NULL && blk_number < NFS_DATA_PER_FILE)
+        while (blk_number < NFS_DATA_PER_FILE)
         {
             offset = NFS_DATA_OFS(inode->used_block_num[blk_number]); // 当前数据块的offset
+            num_dentry_d_in_this_block = 0;
             // 遍历当前数据块的每一个dentry
-            while ((dentry_cursor != NULL) && (offset < NFS_DATA_OFS(inode->used_block_num[blk_number] + 1)))
+            while ((dentry_cursor != NULL) && (num_dentry_d_in_this_block < dentry_d_per_block))
             {
                 memcpy(dentry_d.fname, dentry_cursor->fname, NFS_MAX_FILE_NAME);
                 dentry_d.ftype = dentry_cursor->ftype;
@@ -293,14 +283,31 @@ int nfs_sync_inode(struct nfs_inode *inode)
                     return -NFS_ERROR_IO;
                 }
                 if (dentry_cursor->inode != NULL)
-                {   
+                {
                     nfs_sync_inode(dentry_cursor->inode);
                 }
                 dentry_cursor = dentry_cursor->brother; // 开始遍历下一个兄弟
                 offset += sizeof(struct nfs_dentry_d);
+                num_dentry_d_in_this_block++;
             }
             blk_number++;
         }
+    }
+    else if (NFS_IS_REG(inode))
+    {
+        printf("*****back to disk is file %s\n", inode->dentry->fname);
+        // for (int i = 0; i < NFS_DATA_PER_FILE; i++)
+        // {   
+        //     if (nfs_driver_write(NFS_DATA_OFS(inode->used_block_num[i]), inode->data[i], NFS_BLK_SZ()) != NFS_ERROR_NONE)
+        //     {
+        //         NFS_DBG("[%s] io error\n", __func__);
+        //         return -NFS_ERROR_IO;
+        //     }
+        // }
+    }
+    else
+    {
+        printf("*****%s is nono type\n", inode->dentry->fname);
     }
     return NFS_ERROR_NONE;
 }
@@ -464,9 +471,9 @@ int nfs_mount(struct custom_options options)
 
     // 判断是否是是第一次挂载
     if (nfs_super_d.magic_num != NFS_MAGIC_NUM)
-    {   // 第一次挂载
+    { // 第一次挂载
         // 初始化大小
-        printf("*************************first mount\n`");
+        printf("*************************first mount\n");
         super_blks = NFS_BLKS_SUPER;
         inode_num = NFS_BLKS_INODE;
         data_num = NFS_BLKS_DATA;
@@ -499,14 +506,14 @@ int nfs_mount(struct custom_options options)
     nfs_super.map_inode = (uint8_t *)malloc(NFS_BLKS_SZ(nfs_super_d.map_inode_blks));
     nfs_super.map_inode_blks = nfs_super_d.map_inode_blks;
     nfs_super.map_inode_offset = nfs_super_d.map_inode_offset;
-    //inode区偏移
+    // inode区偏移
     nfs_super.inode_offset = nfs_super_d.inode_offset;
 
     // 建立data位图（仅仅开辟空间）
     nfs_super.map_data = (uint8_t *)malloc(NFS_BLKS_SZ(nfs_super_d.map_data_blks));
     nfs_super.map_data_blks = nfs_super_d.map_data_blks;
     nfs_super.map_data_offset = nfs_super_d.map_data_offset;
-    //data区偏移
+    // data区偏移
     nfs_super.data_offset = nfs_super_d.data_offset;
 
     // 将磁盘中位图信息复制进来
@@ -524,6 +531,9 @@ int nfs_mount(struct custom_options options)
         root_inode = nfs_alloc_inode(root_dentry);
         nfs_sync_inode(root_inode);
     }
+    // 从磁盘根据传入的ino中读取inode
+    // 如果该inode是一个目录文件，将直接的下一级dentry与inode产生关联
+    // 如果该inode是一个普通文件，直接读取数据块
     root_inode = nfs_read_inode(root_dentry, NFS_ROOT_INO);
     root_dentry->inode = root_inode;
     nfs_super.root_dentry = root_dentry;
