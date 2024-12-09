@@ -166,8 +166,8 @@ int nfs_alloc_dentry(struct nfs_inode *inode, struct nfs_dentry *dentry)
 }
 
 /**
- * @brief 分配一个inode，占用位图
- *
+ * @brief 分配一个inode，占用索引位图；
+ * 如果dentry是文件类型，还开辟内存，但未修改数据位图
  * @param dentry 该dentry指向分配的inode
  * @return nfs_inode
  */
@@ -244,6 +244,7 @@ int nfs_sync_inode(struct nfs_inode *inode)
     inode_d.size = inode->size;
     inode_d.ftype = inode->dentry->ftype;
     inode_d.dir_cnt = inode->dir_cnt;
+    printf("*****back to disk %s\n", inode->dentry->fname);
     for (int i = 0; i < NFS_DATA_PER_FILE; i++)
     {
         inode_d.used_block_num[i] = inode->used_block_num[i];
@@ -258,7 +259,8 @@ int nfs_sync_inode(struct nfs_inode *inode)
 
     // inode是一个普通文件索引
     if (NFS_IS_REG(inode))
-    {
+    {      
+        printf("*****back to disk is file %s\n", inode->dentry->fname);
         for (int i = 0; i < NFS_DATA_PER_FILE; i++)
         {
             if (nfs_driver_write(NFS_DATA_OFS(inode->used_block_num[i]), inode->data[i], NFS_BLK_SZ()) != NFS_ERROR_NONE)
@@ -270,7 +272,8 @@ int nfs_sync_inode(struct nfs_inode *inode)
     }
     // inode是一个指向文件夹的索引，要遍历里面每一个dentry对应的inode。会有递归
     else if (NFS_IS_DIR(inode))
-    {
+    {   
+        printf("*****back to disk is dir %s\n", inode->dentry->fname);
         int offset;
         int blk_number = 0;
         dentry_cursor = inode->dentrys;
@@ -290,7 +293,7 @@ int nfs_sync_inode(struct nfs_inode *inode)
                     return -NFS_ERROR_IO;
                 }
                 if (dentry_cursor->inode != NULL)
-                {
+                {   
                     nfs_sync_inode(dentry_cursor->inode);
                 }
                 dentry_cursor = dentry_cursor->brother; // 开始遍历下一个兄弟
@@ -462,8 +465,9 @@ int nfs_mount(struct custom_options options)
 
     // 判断是否是是第一次挂载
     if (nfs_super_d.magic_num != NFS_MAGIC_NUM)
-    { // 第一次挂载
+    {   // 第一次挂载
         // 初始化大小
+        printf("*************************first mount\n`");
         super_blks = NFS_BLKS_SUPER;
         inode_num = NFS_BLKS_INODE;
         data_num = NFS_BLKS_DATA;
@@ -496,12 +500,14 @@ int nfs_mount(struct custom_options options)
     nfs_super.map_inode = (uint8_t *)malloc(NFS_BLKS_SZ(nfs_super_d.map_inode_blks));
     nfs_super.map_inode_blks = nfs_super_d.map_inode_blks;
     nfs_super.map_inode_offset = nfs_super_d.map_inode_offset;
+    //inode区偏移
     nfs_super.inode_offset = nfs_super_d.inode_offset;
 
     // 建立data位图（仅仅开辟空间）
     nfs_super.map_data = (uint8_t *)malloc(NFS_BLKS_SZ(nfs_super_d.map_data_blks));
     nfs_super.map_data_blks = nfs_super_d.map_data_blks;
     nfs_super.map_data_offset = nfs_super_d.map_data_offset;
+    //data区偏移
     nfs_super.data_offset = nfs_super_d.data_offset;
 
     // 将磁盘中位图信息复制进来
@@ -513,7 +519,7 @@ int nfs_mount(struct custom_options options)
     {
         return -1;
     }
-    // 为根目录dentry分配根节点索引
+    // 如果是第一次挂载，为根dentry分配一个指向其的inode
     if (is_init)
     {
         root_inode = nfs_alloc_inode(root_dentry);
@@ -583,7 +589,7 @@ struct nfs_inode *nfs_read_inode(struct nfs_dentry *dentry, int ino)
                     return NULL;
                 }
 
-                /* 用从磁盘中读出的dentry_d更新内存中的sub_dentry */
+                /* 从磁盘中读出的dentry_d更新内存中的sub_dentry */
                 sub_dentry = new_dentry(dentry_d.fname, dentry_d.ftype);
                 sub_dentry->parent = inode->dentry;
                 sub_dentry->ino = dentry_d.ino;
@@ -622,6 +628,7 @@ int nfs_umount()
         return NFS_ERROR_NONE;
     }
     // 写回的是索引节点部分和数据块部分
+
     nfs_sync_inode(nfs_super.root_dentry->inode);
     // 内存中超级快更新将写回磁盘的超级快，并将super_d写回
     nfs_super_d.magic_num = NFS_MAGIC_NUM;

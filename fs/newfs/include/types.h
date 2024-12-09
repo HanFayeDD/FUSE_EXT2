@@ -139,7 +139,10 @@ struct nfs_super {
     struct nfs_dentry* root_dentry;     // 根目录
 };
 
-/* 创建目录项 */
+/** 创建目录项 
+*   为fname创建一个dentry
+*   malloc相应空间
+*/
 static inline struct nfs_dentry* new_dentry(char * fname, FILE_TYPE ftype) {
     struct nfs_dentry * dentry = (struct nfs_dentry *)malloc(sizeof(struct nfs_dentry));
     memset(dentry, 0, sizeof(struct nfs_dentry));
@@ -184,4 +187,4 @@ struct nfs_dentry_d {
     FILE_TYPE       ftype;                              // 文件类型
 };
 
-#endif /* _TYPES_H_ */
+#endif
