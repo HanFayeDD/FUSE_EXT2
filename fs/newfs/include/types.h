@@ -71,6 +71,8 @@ typedef enum file_type
 #define NFS_BLKS_SZ(blks) ((blks) * NFS_BLK_SZ())
 // 计算一个磁盘块可以储存多少dentry
 #define NFS_DENTRY_PER_DATABLK() (NFS_BLK_SZ() / sizeof(struct nfs_dentry)) 
+#define NFS_DENTRY_D_PER_DATABLK() (NFS_BLK_SZ() / sizeof(struct nfs_dentry_d)) 
+
 // 向下取整
 #define NFS_ROUND_DOWN(value, round) ((value) % (round) == 0 ? (value) : ((value) / (round)) * (round))
 // 向上取整

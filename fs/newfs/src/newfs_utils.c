@@ -113,7 +113,7 @@ int nfs_driver_write(int offset, uint8_t *in_content, int size)
 
 /**
  * @brief 为一个inode分配dentry，采用头插法
- *
+ * 修改数据位图
  * @param inode
  * @param dentry
  * @return int
@@ -129,10 +129,11 @@ int nfs_alloc_dentry(struct nfs_inode *inode, struct nfs_dentry *dentry)
         dentry->brother = inode->dentrys;
         inode->dentrys = dentry;
     }
+    printf("*****alloc_dentry for %s  \n", dentry->fname);
     inode->dir_cnt++;
-
-    // 如果是文件，还需要检查当前indn对应的数据块有没有满
-    if (dentry->ftype == NFS_DIR && (inode->dir_cnt % NFS_DENTRY_PER_DATABLK() == 1))
+    printf("*****%s.dir_cnt=%d\n", inode->dentry->fname ,inode->dir_cnt);
+    // 如果是目录文件，还需要检查当前indn对应的数据块有没有满
+    if (dentry->ftype == NFS_DIR && (inode->dir_cnt % NFS_DENTRY_D_PER_DATABLK() == 1))
     {
         int cur_blk = inode->dir_cnt / NFS_DENTRY_PER_DATABLK();
         int byte_cursor, bit_cursor, dno_cursor;
@@ -145,8 +146,8 @@ int nfs_alloc_dentry(struct nfs_inode *inode, struct nfs_dentry *dentry)
                 {
                     /* 当前dno_cursor位置空闲 */
                     nfs_super.map_data[byte_cursor] |= (0x1 << bit_cursor);
-
                     inode->used_block_num[cur_blk] = dno_cursor;
+                    printf("*****new databcok bytes:%d bit %d\n", byte_cursor, bit_cursor);
                     find_free_blk = TRUE;
                     break;
                 }
@@ -511,6 +512,7 @@ int nfs_mount(struct custom_options options)
 
     // 建立data位图（仅仅开辟空间）
     nfs_super.map_data = (uint8_t *)malloc(NFS_BLKS_SZ(nfs_super_d.map_data_blks));
+    // memset(nfs_super.map_data, 0, sizeof(nfs_super.map_data));
     nfs_super.map_data_blks = nfs_super_d.map_data_blks;
     nfs_super.map_data_offset = nfs_super_d.map_data_offset;
     // data区偏移
@@ -521,10 +523,14 @@ int nfs_mount(struct custom_options options)
     {
         return -1;
     }
+
+    printf("*****in data_map reading back:%d\n", nfs_super.map_data[0]);
     if (nfs_driver_read(nfs_super_d.map_data_offset, (uint8_t *)(nfs_super.map_data), NFS_BLKS_SZ(nfs_super_d.map_data_blks)) != NFS_ERROR_NONE)
     {
         return -1;
     }
+    printf("*****in data_map reading back:%d\n", nfs_super.map_data[0]);
+
     // 如果是第一次挂载，为根dentry分配一个指向其的inode
     if (is_init)
     {
@@ -583,14 +589,15 @@ struct nfs_inode *nfs_read_inode(struct nfs_dentry *dentry, int ino)
         dir_cnt = inode_d.dir_cnt;
         int blk_number = 0;
         int offset;
-
+        int dentry_d_per_blks = NFS_BLK_SZ()/sizeof(struct nfs_dentry_d);
+        int num_dentry_d;
         /*处理每一个目录项*/
         while (dir_cnt > 0 && blk_number < NFS_DATA_PER_FILE)
         {
             offset = NFS_DATA_OFS(inode->used_block_num[blk_number]);
-
+            num_dentry_d = 0;
             // 当从磁盘读入时，由于磁盘中没有链表指针，因此只能通过一个dentry_d大小来进行遍历
-            while ((dir_cnt > 0) && (offset + sizeof(struct nfs_dentry_d) < NFS_DATA_OFS(inode->used_block_num[blk_number] + 1)))
+            while ((dir_cnt > 0) && num_dentry_d < dentry_d_per_blks)
             {
                 if (nfs_driver_read(offset, (uint8_t *)&dentry_d, sizeof(struct nfs_dentry_d)) != NFS_ERROR_NONE)
                 {
@@ -606,6 +613,7 @@ struct nfs_inode *nfs_read_inode(struct nfs_dentry *dentry, int ino)
 
                 offset += sizeof(struct nfs_dentry_d);
                 dir_cnt--;
+                num_dentry_d++;
             }
             blk_number++;
         }
@@ -662,6 +670,7 @@ int nfs_umount()
     }
 
     // 将data位图写回
+    printf("*****in data_map writing back:%d\n", nfs_super.map_data[0]);
     if (nfs_driver_write(nfs_super_d.map_data_offset, (uint8_t *)nfs_super.map_data, NFS_BLKS_SZ(nfs_super_d.map_data_blks)) != NFS_ERROR_NONE)
     {
         return -NFS_ERROR_IO;

@@ -239,8 +239,8 @@ int newfs_mknod(const char *path, mode_t mode, dev_t dev)
 		dentry = new_dentry(fname, NFS_FILE);
 	}
 	dentry->parent = last_dentry;
-	inode = nfs_alloc_inode(dentry);
-	nfs_alloc_dentry(last_dentry->inode, dentry);
+	inode = nfs_alloc_inode(dentry);//inode位图修改
+	nfs_alloc_dentry(last_dentry->inode, dentry);//数据位图修改
 	return NFS_ERROR_NONE;
 }
 
