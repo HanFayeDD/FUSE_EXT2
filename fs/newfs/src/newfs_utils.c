@@ -299,7 +299,6 @@ int nfs_sync_inode(struct nfs_inode *inode)
                 dentry_cursor = dentry_cursor->brother; // 开始遍历下一个兄弟
                 offset += sizeof(struct nfs_dentry_d);
             }
-
             blk_number++;
         }
     }
@@ -628,7 +627,6 @@ int nfs_umount()
         return NFS_ERROR_NONE;
     }
     // 写回的是索引节点部分和数据块部分
-
     nfs_sync_inode(nfs_super.root_dentry->inode);
     // 内存中超级快更新将写回磁盘的超级快，并将super_d写回
     nfs_super_d.magic_num = NFS_MAGIC_NUM;
