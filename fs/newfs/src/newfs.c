@@ -104,16 +104,15 @@ int newfs_mkdir(const char *path, mode_t mode)
 		return -NFS_ERROR_UNSUPPORTED;
 	}
 
-	// 为新创建的文件夹创建一个新的dentry
+
 	fname = nfs_get_fname(path);
 	dentry = new_dentry(fname, NFS_DIR);
-	dentry->parent = last_dentry; // 维护层级结构
+	dentry->parent = last_dentry; 
 
-	// 为新建的目录创建一个索引
 	inode = nfs_alloc_inode(dentry);
 
 	// 将新建的目录添加到父目录的inode当中
-	nfs_alloc_dentry(last_dentry->inode, dentry);
+	nfs_alloc_dentry(last_dentry->inode, dentry, 1);
 
 	return NFS_ERROR_NONE;
 }
@@ -240,7 +239,7 @@ int newfs_mknod(const char *path, mode_t mode, dev_t dev)
 	}
 	dentry->parent = last_dentry;
 	inode = nfs_alloc_inode(dentry);//inode位图修改
-	nfs_alloc_dentry(last_dentry->inode, dentry);//数据位图修改
+	nfs_alloc_dentry(last_dentry->inode, dentry, 1);//数据位图修改
 	return NFS_ERROR_NONE;
 }
 

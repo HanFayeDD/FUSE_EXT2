@@ -118,7 +118,7 @@ int nfs_driver_write(int offset, uint8_t *in_content, int size)
  * @param dentry
  * @return int
  */
-int nfs_alloc_dentry(struct nfs_inode *inode, struct nfs_dentry *dentry)
+int nfs_alloc_dentry(struct nfs_inode *inode, struct nfs_dentry *dentry, int allow_mdata_update)
 {
     if (inode->dentrys == NULL)
     {
@@ -133,10 +133,10 @@ int nfs_alloc_dentry(struct nfs_inode *inode, struct nfs_dentry *dentry)
     inode->dir_cnt++;
     printf("*****%s.dir_cnt=%d\n", inode->dentry->fname ,inode->dir_cnt);
     // 如果是目录文件，还需要检查当前indn对应的数据块有没有满
-    if (dentry->ftype == NFS_DIR && (inode->dir_cnt % NFS_DENTRY_D_PER_DATABLK() == 1))
+    if (allow_mdata_update==1 && (inode->dir_cnt % NFS_DENTRY_PER_DATABLK() == 1))
     {
         int cur_blk = inode->dir_cnt / NFS_DENTRY_PER_DATABLK();
-        int byte_cursor, bit_cursor, dno_cursor;
+        int byte_cursor, bit_cursor, dno_cursor=0;
         boolean find_free_blk = FALSE;
         for (byte_cursor = 0; byte_cursor < NFS_BLKS_SZ(nfs_super.map_data_blks); byte_cursor++)
         {
@@ -144,7 +144,6 @@ int nfs_alloc_dentry(struct nfs_inode *inode, struct nfs_dentry *dentry)
             {
                 if ((nfs_super.map_data[byte_cursor] & (0x1 << bit_cursor)) == 0)
                 {
-                    /* 当前dno_cursor位置空闲 */
                     nfs_super.map_data[byte_cursor] |= (0x1 << bit_cursor);
                     inode->used_block_num[cur_blk] = dno_cursor;
                     printf("*****new databcok bytes:%d bit %d\n", byte_cursor, bit_cursor);
@@ -262,11 +261,16 @@ int nfs_sync_inode(struct nfs_inode *inode)
     if (NFS_IS_DIR(inode))
     {
         printf("*****back to disk is dir %s\n", inode->dentry->fname);
+        printf("*****inode used_block_num is:");
+        for(int idx=0; idx<6; idx++){
+            printf(" %d", inode->used_block_num[idx]);
+        }
+        printf("\n");
         int offset;
         int dentry_d_per_block = NFS_BLK_SZ() / sizeof(struct nfs_dentry_d);
         int num_dentry_d_in_this_block;
         int blk_number = 0;
-        dentry_cursor = inode->dentrys;
+        dentry_cursor = inode->dentrys;//对于一个inode（目录文件），如果其下的dentrys为空，那么下述两层while循环不会进入
         // 遍历一个inode对应的所有data块
         while (blk_number < NFS_DATA_PER_FILE)
         {
@@ -283,6 +287,7 @@ int nfs_sync_inode(struct nfs_inode *inode)
                     NFS_DBG("[%s] io error\n", __func__);
                     return -NFS_ERROR_IO;
                 }
+                printf("*****writing dentry named %s, idx %d in this block, in block num %d\n", dentry_d.fname, num_dentry_d_in_this_block+1, inode->used_block_num[blk_number]);
                 if (dentry_cursor->inode != NULL)
                 {
                     nfs_sync_inode(dentry_cursor->inode);
@@ -297,6 +302,8 @@ int nfs_sync_inode(struct nfs_inode *inode)
     else if (NFS_IS_REG(inode))
     {
         printf("*****back to disk is file %s\n", inode->dentry->fname);
+        //此处是将普通文件inode的数据块刷回磁盘，但由于used_block_num默认值的问题，可能回造成其他区域被覆盖。
+        //如果考虑普通文件的刷回，还需要一个指示变量。
         // for (int i = 0; i < NFS_DATA_PER_FILE; i++)
         // {   
         //     if (nfs_driver_write(NFS_DATA_OFS(inode->used_block_num[i]), inode->data[i], NFS_BLK_SZ()) != NFS_ERROR_NONE)
@@ -582,8 +589,6 @@ struct nfs_inode *nfs_read_inode(struct nfs_dentry *dentry, int ino)
         inode->used_block_num[i] = inode_d.used_block_num[i];
     }
 
-    /*判断iNode节点的文件类型*/
-    /*如果inode是目录类型，则需要读取每一个目录项并建立连接*/
     if (NFS_IS_DIR(inode))
     {
         dir_cnt = inode_d.dir_cnt;
@@ -591,12 +596,10 @@ struct nfs_inode *nfs_read_inode(struct nfs_dentry *dentry, int ino)
         int offset;
         int dentry_d_per_blks = NFS_BLK_SZ()/sizeof(struct nfs_dentry_d);
         int num_dentry_d;
-        /*处理每一个目录项*/
         while (dir_cnt > 0 && blk_number < NFS_DATA_PER_FILE)
         {
             offset = NFS_DATA_OFS(inode->used_block_num[blk_number]);
             num_dentry_d = 0;
-            // 当从磁盘读入时，由于磁盘中没有链表指针，因此只能通过一个dentry_d大小来进行遍历
             while ((dir_cnt > 0) && num_dentry_d < dentry_d_per_blks)
             {
                 if (nfs_driver_read(offset, (uint8_t *)&dentry_d, sizeof(struct nfs_dentry_d)) != NFS_ERROR_NONE)
@@ -604,12 +607,10 @@ struct nfs_inode *nfs_read_inode(struct nfs_dentry *dentry, int ino)
                     NFS_DBG("[%s] io error\n", __func__);
                     return NULL;
                 }
-
-                /* 从磁盘中读出的dentry_d更新内存中的sub_dentry */
                 sub_dentry = new_dentry(dentry_d.fname, dentry_d.ftype);
                 sub_dentry->parent = inode->dentry;
                 sub_dentry->ino = dentry_d.ino;
-                nfs_alloc_dentry(inode, sub_dentry);
+                nfs_alloc_dentry(inode, sub_dentry, 0);
 
                 offset += sizeof(struct nfs_dentry_d);
                 dir_cnt--;
@@ -618,7 +619,6 @@ struct nfs_inode *nfs_read_inode(struct nfs_dentry *dentry, int ino)
             blk_number++;
         }
     }
-    /*如果inode是文件类型，则直接读取数据即可*/
     else if (NFS_IS_REG(inode))
     {
         for (int i = 0; i < NFS_DATA_PER_FILE; i++)

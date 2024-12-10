@@ -32,7 +32,7 @@ int nfs_driver_read(int, uint8_t *, int);
 int nfs_driver_write(int, uint8_t *, int);
 int nfs_mount(struct custom_options);
 int nfs_umount();
-int nfs_alloc_dentry(struct nfs_inode *inode, struct nfs_dentry *dentry);
+int nfs_alloc_dentry(struct nfs_inode *inode, struct nfs_dentry *dentry, int);
 struct nfs_inode *nfs_alloc_inode(struct nfs_dentry *dentry);
 int nfs_sync_inode(struct nfs_inode *inode);
 struct nfs_inode *nfs_read_inode(struct nfs_dentry *dentry, int ino);
