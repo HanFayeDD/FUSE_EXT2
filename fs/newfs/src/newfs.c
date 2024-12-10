@@ -84,6 +84,9 @@ void newfs_destroy(void *p)
  * @param mode 创建模式（只读？只写？），可忽略
  * @return int 0成功，否则返回对应错误号
  */
+
+//限制一个目录下的最多文件数量
+int max_dentrys_2_inode = 100000;
 int newfs_mkdir(const char *path, mode_t mode)
 {
 	/* TODO: 解析路径，创建目录 */
@@ -104,9 +107,14 @@ int newfs_mkdir(const char *path, mode_t mode)
 		return -NFS_ERROR_UNSUPPORTED;
 	}
 
+	//限制一个目录下最多能创建的文件数量
+	if((last_dentry->inode->dir_cnt+1)>max_dentrys_2_inode){
+		return -NFS_ERROR_UNSUPPORTED;
+	}
 
 	fname = nfs_get_fname(path);
 	dentry = new_dentry(fname, NFS_DIR);
+
 	dentry->parent = last_dentry; 
 
 	inode = nfs_alloc_inode(dentry);
@@ -177,24 +185,40 @@ int newfs_getattr(const char *path, struct stat *nfs_stat)
  * @param fi 可忽略
  * @return int 0成功，否则返回对应错误号
  */
+//ls显示最新创建的几个文件
+int nums = 100000;
+int now_nums = 0;
+
 int newfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset,
 				  struct fuse_file_info *fi)
 {
 	/* TODO: 解析路径，获取目录的Inode，并读取目录项，利用filler填充到buf，可参考/fs/simplefs/sfs.c的sfs_readdir()函数实现 */
 	boolean is_find, is_root;
 	int cur_dir = offset;
+	if(offset == 0){
+		nums = 100000;
+		now_nums = 0;
+	}
 
 	/* 解析父目录路径 */
 	struct nfs_dentry *dentry = nfs_lookup(path, &is_find, &is_root);
 	struct nfs_dentry *sub_dentry;
 	struct nfs_inode *inode;
+	printf("*****readdir %s\n", dentry->fname);
+	printf("*****offset %d  is_find %d is_root %d\n", offset, is_find, is_root);
 	if (is_find)
 	{
 		inode = dentry->inode;
 		/* 根据offset获取到对应的子文件名 */
+		printf("*****cur_dir %d\n", cur_dir);
 		sub_dentry = nfs_get_dentry(inode, cur_dir);
 		if (sub_dentry)
-		{
+		{	
+			now_nums++;
+			if(now_nums>nums){
+				return -NFS_ERROR_NOTFOUND;
+			}
+			printf("***** subentry->fname:%s\n", sub_dentry->fname);
 			/* 直接调用filler来装填结果 */
 			filler(buf, sub_dentry->fname, NULL, ++offset);
 		}
@@ -216,6 +240,13 @@ int newfs_mknod(const char *path, mode_t mode, dev_t dev)
 	/* TODO: 解析路径，并创建相应的文件 */
 	boolean is_find, is_root;
 	struct nfs_dentry *last_dentry = nfs_lookup(path, &is_find, &is_root);
+
+	//限制一个目录下最多能创建的文件数量
+	if((last_dentry->inode->dir_cnt+1)>max_dentrys_2_inode){
+		return -NFS_ERROR_UNSUPPORTED;
+	}
+
+
 	struct nfs_dentry *dentry;
 	struct nfs_inode *inode;
 	char *fname;
